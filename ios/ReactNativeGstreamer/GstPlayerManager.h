@@ -11,11 +11,13 @@
 
 #import <React/RCTViewManager.h>
 #import "GstPlayerController.h"
+#import "EaglUIView.h"
 
 
 @interface GstPlayerManager : RCTViewManager {
   GstPlayerController *rctGstPlayer;
 }
+
 @end
 
 #endif /* RCTGSTPlayerManager_h */

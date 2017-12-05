@@ -19,7 +19,13 @@
 
 
 @interface EaglUIView : UIView
+
+- (void) clearContext;
+
 @property (nonatomic, copy) RCTBubblingEventBlock onAudioLevelChange;
+@property (nonatomic, copy) RCTBubblingEventBlock onStateChanged;
+@property (nonatomic, copy) RCTBubblingEventBlock onReady;
+
 @end
 
 

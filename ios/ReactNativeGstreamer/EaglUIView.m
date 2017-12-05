@@ -19,4 +19,11 @@
   return [CAEAGLLayer class];
 }
 
+- (void) clearContext
+{
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    
+    CGContextClearRect(context, self.bounds);
+}
+
 @end

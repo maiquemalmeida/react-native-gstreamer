@@ -11,7 +11,9 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#include <gst/gst.h>
 #import "GStreamerBackendDelegate.h"
+#import "EaglUIView.h"
 
 @interface GStreamerBackend : NSObject
 
@@ -36,12 +38,23 @@
 /* Set the URI to be played */
 -(void) setUri:(NSString*)uri;
 
+-(void)setLaunchCmd:(NSString *)_launchCmd;
+
+
 /* Set the default playing state */
 -(void) setPlay:(BOOL)play;
 
 /* Set the position to seek to, in milliseconds */
 -(void) setPosition:(NSInteger)milliseconds;
 
+/* Set the player state */
+-(GstStateChangeReturn) setState:(GstState)state;
+
+/* Redraw */
+-(void) refreshScreen;
+
+/* Flush buffers */
+-(void) flushBuffers;
 @end
 
 #endif /* GStreamerBackend_h */

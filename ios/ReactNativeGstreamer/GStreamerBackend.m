@@ -1,6 +1,5 @@
 #import "GStreamerBackend.h"
 
-#include <gst/gst.h>
 #include <gst/video/video.h>
 #import "gst_ios_init.h"
 
@@ -24,7 +23,7 @@ GST_DEBUG_CATEGORY_STATIC (debug_category);
     GMainContext *context;       /* GLib context used to run the main loop */
     GMainLoop *main_loop;        /* GLib main loop */
     gboolean initialized;        /* To avoid informing the UI multiple times about the initialization */
-    UIView *ui_video_view;       /* UIView that holds the video */
+    EaglUIView *ui_video_view;   /* UIView that holds the video */
     GstState state;              /* Current pipeline state */
     GstState target_state;       /* Desired pipeline state, to be set once buffering is complete */
     gint64 duration;             /* Cached clip duration */
@@ -32,7 +31,8 @@ GST_DEBUG_CATEGORY_STATIC (debug_category);
     GstClockTime last_seek_time; /* For seeking overflow prevention (throttling) */
     gboolean is_live;            /* Live streams do not use buffering */
     NSString *currentUri;        /* Current uri */
-    BOOL play;                   /* Play state */
+    GstVideoOverlay *overlay;
+    NSString *launchCmd;
 }
 
 /*
@@ -55,8 +55,6 @@ GST_DEBUG_CATEGORY_STATIC (debug_category);
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
             [self app_function];
         });
-        
-        self->play = false;
     }
     
     return self;
@@ -79,26 +77,24 @@ GST_DEBUG_CATEGORY_STATIC (debug_category);
 
 -(void) play
 {
-    NSLog(@"Play called");
     target_state = GST_STATE_PLAYING;
-    is_live = (gst_element_set_state (pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_NO_PREROLL);
+    is_live = ([self setState:GST_STATE_PLAYING] == GST_STATE_CHANGE_NO_PREROLL);
 }
 
 -(void) pause
 {
     target_state = GST_STATE_PAUSED;
-    is_live = (gst_element_set_state (pipeline, GST_STATE_PAUSED) == GST_STATE_CHANGE_NO_PREROLL);
+    is_live = ([self setState:GST_STATE_PAUSED ] == GST_STATE_CHANGE_NO_PREROLL);
 }
 
 -(void) setUri:(NSString*)_uri
 {
     self->currentUri = _uri;
-    gst_element_set_state(pipeline, GST_STATE_READY);
 }
 
--(void) setPlay:(BOOL)_play
+-(void) setLaunchCmd:(NSString*)_launchCmd
 {
-    self->play = _play;
+    self->launchCmd = _launchCmd;
 }
 
 -(void) setPosition:(NSInteger)milliseconds
@@ -112,6 +108,22 @@ GST_DEBUG_CATEGORY_STATIC (debug_category);
     }
 }
 
+-(GstStateChangeReturn) setState:(GstState)state
+{
+    GST_DEBUG(gst_element_state_get_name(state));
+    return gst_element_set_state(self->pipeline, state);
+}
+
+-(void) refreshScreen
+{
+
+}
+
+-(void) flushBuffers
+{
+
+}
+
 /*
  * Private methods
  */
@@ -120,7 +132,6 @@ GST_DEBUG_CATEGORY_STATIC (debug_category);
 -(void)setUIMessage:(gchar*) message
 {
     NSString *string = [NSString stringWithUTF8String:message];
-    NSLog(string);
     if(ui_delegate && [ui_delegate respondsToSelector:@selector(gstreamerSetUIMessage:)])
     {
         [ui_delegate gstreamerSetUIMessage:string];
@@ -210,19 +221,22 @@ static void error_cb (GstBus *bus, GstMessage *msg, GStreamerBackend *self)
     gchar *debug_info;
     gchar *message_string;
     
+    
     gst_message_parse_error (msg, &err, &debug_info);
     message_string = g_strdup_printf ("Error received from element %s: %s", GST_OBJECT_NAME (msg->src), err->message);
     g_clear_error (&err);
     g_free (debug_info);
     [self setUIMessage:message_string];
     g_free (message_string);
-    gst_element_set_state (self->pipeline, GST_STATE_NULL);
+    [self setState:GST_STATE_NULL];
+    
+    NSLog(@"error_cb : %s", [NSString stringWithUTF8String:err->message]);
 }
 
 /* Called when the End Of the Stream is reached. Just move to the beginning of the media and pause. */
 static void eos_cb (GstBus *bus, GstMessage *msg, GStreamerBackend *self) {
     self->target_state = GST_STATE_PAUSED;
-    self->is_live = (gst_element_set_state (self->pipeline, GST_STATE_PAUSED) == GST_STATE_CHANGE_NO_PREROLL);
+    self->is_live = ([self setState:GST_STATE_PAUSED] == GST_STATE_CHANGE_NO_PREROLL);
     execute_seek (0, self);
 }
 
@@ -242,11 +256,11 @@ static void buffering_cb (GstBus *bus, GstMessage *msg, GStreamerBackend *self) 
     gst_message_parse_buffering (msg, &percent);
     if (percent < 100 && self->target_state >= GST_STATE_PAUSED) {
         gchar * message_string = g_strdup_printf ("Buffering %d%%", percent);
-        gst_element_set_state (self->pipeline, GST_STATE_PAUSED);
+        [self setState:GST_STATE_PAUSED];
         [self setUIMessage:message_string];
         g_free (message_string);
     } else if (self->target_state >= GST_STATE_PLAYING) {
-        gst_element_set_state (self->pipeline, GST_STATE_PLAYING);
+        [self setState:GST_STATE_PLAYING];
     } else if (self->target_state >= GST_STATE_PAUSED) {
         [self setUIMessage:"Buffering complete"];
     }
@@ -255,8 +269,8 @@ static void buffering_cb (GstBus *bus, GstMessage *msg, GStreamerBackend *self) 
 /* Called when the clock is lost */
 static void clock_lost_cb (GstBus *bus, GstMessage *msg, GStreamerBackend *self) {
     if (self->target_state >= GST_STATE_PLAYING) {
-        gst_element_set_state (self->pipeline, GST_STATE_PAUSED);
-        gst_element_set_state (self->pipeline, GST_STATE_PLAYING);
+        [self setState:GST_STATE_PAUSED];
+        [self setState:GST_STATE_PLAYING];
     }
 }
 
@@ -297,8 +311,17 @@ static void state_changed_cb (GstBus *bus, GstMessage *msg, GStreamerBackend *se
     GstState old_state, new_state, pending_state;
     gst_message_parse_state_changed (msg, &old_state, &new_state, &pending_state);
     /* Only pay attention to messages coming from the pipeline, not its children */
+    
+    // NSLog(@"Evenement de %s pour l'état %s", (GST_MESSAGE_SRC (msg))->name, gst_element_state_get_name(new_state));
+    
     if (GST_MESSAGE_SRC (msg) == GST_OBJECT (self->pipeline)) {
         self->state = new_state;
+        
+        if(self->ui_delegate && [self->ui_delegate respondsToSelector:@selector(stateChanged:)])
+        {
+            [self->ui_delegate stateChanged: [NSString stringWithUTF8String:gst_element_state_get_name(self->state)]];
+        }
+        
         gchar *message = g_strdup_printf("State changed to %s", gst_element_state_get_name(new_state));
         
         [self setUIMessage:message];
@@ -306,21 +329,60 @@ static void state_changed_cb (GstBus *bus, GstMessage *msg, GStreamerBackend *se
         
         if (old_state == GST_STATE_READY && new_state == GST_STATE_PAUSED)
         {
-            // check_media_size(self);
-            
             /* If there was a scheduled seek, perform it now that we have moved to the Paused state */
             if (GST_CLOCK_TIME_IS_VALID (self->desired_position))
                 execute_seek (self->desired_position, self);
         }
         
-        if (new_state == GST_STATE_READY) {
-            const char *char_uri = [self->currentUri UTF8String];
-            g_object_set(self->pipeline, "uri", char_uri, NULL);
-            NSLog(@"URI ABOUT TO BE PLAYED : %@", self->currentUri);
-            if (self->play)
-                [self play];
+        if (old_state == GST_STATE_PLAYING && new_state == GST_STATE_PAUSED) {
+            
+        }
+        else if (old_state == GST_STATE_PAUSED && new_state == GST_STATE_PLAYING) {
+            
+            /*
+            GstPad *srcVideoSinkPad = gst_element_get_static_pad (self->video_sink, "sink");
+            NSLog(@"Pad : %p", srcVideoSinkPad);
+            gst_pad_add_probe(srcVideoSinkPad, GST_PAD_PROBE_TYPE_BLOCK_DOWNSTREAM, (GstPadProbeCallback) cb_blocked, self->pipeline, NULL);
+             */
+            
+            for (int i = 0; i < self->video_sink->numsinkpads; i++) {
+                GstPad* sinkPad = g_list_nth_data(self->video_sink->sinkpads, i);
+                NSLog(@"Sink : %s, Pad : %p, %s", GST_ELEMENT_NAME(self->video_sink), sinkPad, GST_PAD_NAME(sinkPad));
+            }
+            
+            
+            
+            // GstGLImageSink * glImageSink = (GstGLImageSink *) self->video_sink;
+            
+            /*
+            GstElement *current_video_sink;
+            g_object_get (self->pipeline, "video-sink", &current_video_sink, NULL);
+            
+            current_video_sink->sinkpads[0];
+             */
+            
+            /*
+            GstElement *video_sink = gst_element_factory_make("glimagesink", "video_sink");
+            g_object_set (self->pipeline, "video-sink", video_sink, NULL);
+             */
         }
     }
+}
+/* Notify that we are waiting for a window to draw on */
+static GstBusSyncReply create_window (GstBus * bus, GstMessage * message, GStreamerBackend *self)
+{
+    // ignore anything but 'prepare-window-handle' element messages
+    if (!gst_is_video_overlay_prepare_window_handle_message (message))
+        return GST_BUS_PASS;
+    
+    NSLog(@"create_window");
+    self->video_sink = gst_bin_get_by_interface(GST_BIN(self->pipeline), GST_TYPE_VIDEO_OVERLAY);
+    NSLog(@"Video Sink : %p", self->video_sink);
+    self->overlay = GST_VIDEO_OVERLAY(self->video_sink);
+    gst_video_overlay_set_window_handle(self->overlay, (guintptr) (id) self->ui_video_view);
+    
+    gst_message_unref (message);
+    return GST_BUS_DROP;
 }
 
 /* Check if all conditions are met to report GStreamer as initialized.
@@ -329,6 +391,13 @@ static void state_changed_cb (GstBus *bus, GstMessage *msg, GStreamerBackend *se
 {
     if (!initialized && main_loop) {
         GST_DEBUG ("Initialization complete, notifying application.");
+        
+        /*
+        const char *char_uri = [self->currentUri UTF8String];
+        g_object_set(self->pipeline, "uri", char_uri, NULL);
+        NSLog(@"URI to play, set to %s", char_uri);
+         */
+        
         if (ui_delegate && [ui_delegate respondsToSelector:@selector(gstreamerInitialized)])
         {
             [ui_delegate gstreamerInitialized];
@@ -371,6 +440,14 @@ static gboolean message_element_cb (GstBus *bus, GstMessage *msg, GStreamerBacke
     return TRUE;
 }
 
+/* called when a source pad of uridecodebin is blocked */
+static GstPadProbeReturn
+cb_blocked (GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
+{
+    NSLog(@"TEST PROBE");
+    return GST_PAD_PROBE_DROP;
+}
+
 /* Main method for the bus monitoring code */
 -(void) app_function
 {
@@ -386,7 +463,7 @@ static gboolean message_element_cb (GstBus *bus, GstMessage *msg, GStreamerBacke
     g_main_context_push_thread_default(context);
     
     /* Build pipeline */
-    pipeline = gst_parse_launch("playbin", &error);
+    pipeline = gst_parse_launch([self->launchCmd UTF8String], &error);
     if (error) {
         gchar *message = g_strdup_printf("Unable to build pipeline: %s", error->message);
         g_clear_error (&error);
@@ -394,17 +471,10 @@ static gboolean message_element_cb (GstBus *bus, GstMessage *msg, GStreamerBacke
         g_free (message);
         return;
     }
-    g_signal_connect(G_OBJECT(pipeline), "source-setup", (GCallback) setup_source_cb, NULL);
+    // g_signal_connect(G_OBJECT(pipeline), "source-setup", (GCallback) setup_source_cb, NULL);
     
     /* Set the pipeline to READY, so it can already accept a window handle */
-    gst_element_set_state(pipeline, GST_STATE_READY);
-    
-    video_sink = gst_bin_get_by_interface(GST_BIN(pipeline), GST_TYPE_VIDEO_OVERLAY);
-    if (!video_sink) {
-        GST_ERROR ("Could not retrieve video sink");
-        return;
-    }
-    gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(video_sink), (guintptr) (id) ui_video_view);
+    // [self setState:GST_STATE_READY];
     
     /* Instruct the bus to emit signals for each received message, and connect to the interesting signals */
     bus = gst_element_get_bus (pipeline);
@@ -428,8 +498,15 @@ static gboolean message_element_cb (GstBus *bus, GstMessage *msg, GStreamerBacke
     gst_element_add_pad (leveledsink, gst_ghost_pad_new ("sink", levelPad));
     gst_object_unref (GST_OBJECT (levelPad));
     
+    //Probing source pad before video-sink
+    gst_bus_set_sync_handler (bus, (GstBusSyncHandler) create_window, (__bridge void *)self, NULL);
+    GstPad *videoSinkPad = gst_element_get_static_pad (self->pipeline, "video_sink");
+    NSLog(@"videoSinkPad : %p", videoSinkPad);
+    
+    /*
     g_object_set (pipeline, "audio-sink", leveledsink, NULL);
     g_signal_connect (G_OBJECT (bus), "message::element", (GCallback)message_element_cb, (__bridge void *)self);
+    */
     
     /* Configure other signals */
     g_signal_connect (G_OBJECT (bus), "message::error", (GCallback)error_cb, (__bridge void *)self);
@@ -458,7 +535,7 @@ static gboolean message_element_cb (GstBus *bus, GstMessage *msg, GStreamerBacke
     /* Free resources */
     g_main_context_pop_thread_default(context);
     g_main_context_unref (context);
-    gst_element_set_state (pipeline, GST_STATE_NULL);
+    [self setState:GST_STATE_NULL];
     gst_object_unref (pipeline);
     pipeline = NULL;
     

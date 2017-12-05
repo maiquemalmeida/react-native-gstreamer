@@ -14,18 +14,22 @@
 @implementation GstPlayerController
 
 @synthesize uri;
-@synthesize play;
 @synthesize gst_backend;
 
 /*
  * Methods from RCTGSTPlayerController
  */
 
+@dynamic view;
+- (void)loadView {
+    self.view = [[EaglUIView alloc] initWithFrame:UIScreen.mainScreen.applicationFrame];
+}
+
+
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-    gst_backend = [[GStreamerBackend alloc] init:self videoView:video_view];
-    
+    gst_backend = [[GStreamerBackend alloc] init:self videoView:self.view];
 }
 
 /* Called when the size of the main view has changed, so we can
@@ -34,15 +38,24 @@
 {
 }
 
+-(void)refreshScreen
+{
+    [gst_backend refreshScreen];
+}
+
 -(void)setUri:(NSString *)_uri
 {
     [gst_backend setUri:_uri];
 }
 
--(void)setPlay:(BOOL)_play
+-(void)setLaunchCmd:(NSString *)_launchCmd
 {
-    NSLog(@"State of play : %@", _play == YES ? @"YES" : @"NO");
-    [gst_backend setPlay:_play];
+    [gst_backend setLaunchCmd:_launchCmd];
+}
+
+-(void)setState:(GstState)state
+{
+    [gst_backend setState:state];
 }
 
 - (void)viewDidDisappear:(BOOL)animated
@@ -67,14 +80,16 @@
 -(void) gstreamerInitialized
 {
     dispatch_async(dispatch_get_main_queue(), ^{
-        message_label.text = @"Ready";
+
     });
+    
+    [self ready];
 }
 
 -(void) gstreamerSetUIMessage:(NSString *)message
 {
     dispatch_async(dispatch_get_main_queue(), ^{
-        message_label.text = message;
+
     });
 }
 
@@ -90,4 +105,26 @@
     });
 }
 
+-(void) stateChanged:(NSString *)state
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        
+        EaglUIView* view = (EaglUIView*)self.view;
+        if (!view.onStateChanged)
+            return;
+        
+        view.onStateChanged(@{ @"state": state });
+    });
+}
+
+-(void) ready
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        EaglUIView* view = (EaglUIView*)self.view;
+        if (!view.onStateChanged)
+            return;
+        
+        view.onReady(@{ @"ready": @YES });
+    });
+}
 @end

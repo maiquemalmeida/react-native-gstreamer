@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <gst/gst.h>
 
 @protocol GStreamerBackendDelegate <NSObject>
 
@@ -17,7 +18,16 @@
 /* Called when the media position changes. Times in milliseconds */
 -(void) setCurrentPosition:(NSInteger)position duration:(NSInteger)duration;
 
+/* Change the gstreamer state */
+-(void) setState:(GstState)state;
+
 /* Called when the audio level changes */
 -(void) audioLevelChanged:(double)audioLevel;
+
+/* Called when the state changes */
+-(void) stateChanged:(NSString *)state;
+
+/* Called when the player is ready */
+-(void) ready;
 
 @end

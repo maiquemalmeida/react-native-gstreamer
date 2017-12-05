@@ -11,30 +11,23 @@
 #import "GStreamerBackendDelegate.h"
 #import "GStreamerBackend.h"
 #import <React/RCTBridgeModule.h>
-
+#import "EaglUIView.h"
 
 @interface GstPlayerController : UIViewController <GStreamerBackendDelegate> {
-  IBOutlet UILabel *version_label;
-  IBOutlet UILabel *message_label;
-  IBOutlet UIView *video_view;
-  IBOutlet UIView *video_container_view;
-  IBOutlet NSLayoutConstraint *video_width_constraint;
-  IBOutlet NSLayoutConstraint *video_height_constraint;
-  IBOutlet UIStackView *footer_stack_view;
+    EaglUIView *_view;
 }
 
+@property (nonatomic, retain) IBOutlet EaglUIView *view;
 @property (retain, nonatomic) NSString *uri;
-@property BOOL play;
 @property (retain, nonatomic) GStreamerBackend *gst_backend;
 
--(IBAction) play:(id)sender;
--(IBAction) pause:(id)sender;
-
--(void) setAudioLevelCb:(void *)cb;
+-(void) refreshScreen;
 
 /* From GStreamerBackendDelegate */
 -(void) gstreamerInitialized;
 -(void) gstreamerSetUIMessage:(NSString *)message;
 -(void) setUri:(NSString *)_uri;
+-(void) setState:(GstState)state;
+-(void) setLaunchCmd:(NSString*)_launchCmd;
 
 @end
